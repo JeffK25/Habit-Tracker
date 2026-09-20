@@ -120,6 +120,43 @@
   .icon-btn:active{ transform:scale(.94); }
   .icon-btn svg{ width:18px; height:18px; }
 
+  .date-picker-btn{
+    display:flex; align-items:center; gap:6px;
+    background:none; border:none; padding:2px 0; cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .date-picker-btn:active{ opacity:.7; }
+  .date-picker-btn svg{ width:14px; height:14px; color:var(--ink-dim); }
+  .date-picker-btn.viewing-past .brand-date{ color:var(--accent); font-weight:600; }
+  .date-picker-btn.viewing-past svg{ color:var(--accent); }
+  .today-jump-pill{
+    font-family:var(--font-mono); font-size:.72rem; color:var(--accent);
+    background:color-mix(in srgb, var(--accent) 12%, var(--surface)); border:1px solid var(--accent); border-radius:99px;
+    padding:3px 10px; cursor:pointer; -webkit-tap-highlight-color:transparent;
+  }
+  .today-jump-pill:active{ opacity:.7; }
+
+  .cal-nav{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  .cal-nav-btn{
+    width:34px; height:34px; border-radius:9px; border:1px solid var(--border); background:var(--surface);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--ink);
+  }
+  .cal-nav-btn:disabled{ opacity:.35; cursor:default; }
+  .cal-nav-btn svg{ width:16px; height:16px; }
+  .cal-month-label{ font-family:var(--font-display); font-weight:600; font-size:1.05rem; }
+  .cal-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
+  .cal-dow{ font-size:.64rem; color:var(--ink-dim); text-align:center; font-family:var(--font-mono); padding-bottom:4px; }
+  .cal-cell{
+    aspect-ratio:1; border-radius:10px; display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-mono); font-size:.86rem; color:var(--ink); background:var(--surface-2);
+    border:1px solid transparent; cursor:pointer;
+  }
+  .cal-cell:active{ transform:scale(.94); }
+  .cal-cell.blank{ background:none; cursor:default; }
+  .cal-cell.future{ color:var(--ink-dim); opacity:.35; cursor:default; }
+  .cal-cell.today{ border-color:var(--accent); }
+  .cal-cell.selected{ background:var(--accent); color:var(--surface); font-weight:600; }
+
   .today-progress{ display:flex; align-items:center; gap:10px; }
   .today-progress-track{
     flex:1; height:7px; border-radius:99px; background:var(--border-soft); overflow:hidden;
@@ -329,7 +366,11 @@
       </button>
     </div>
     <div class="header-row">
-      <span class="brand-date" id="dateLabel"></span>
+      <button class="date-picker-btn" id="calOpenBtn">
+        <span class="brand-date" id="dateLabel"></span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"></rect><path d="M3 10h18"></path><path d="M8 3v4M16 3v4"></path></svg>
+      </button>
+      <button class="today-jump-pill" id="jumpTodayBtn" hidden>Jump to today</button>
     </div>
     <div class="today-progress">
       <div class="today-progress-track"><div class="today-progress-fill" id="todayFill"></div></div>
@@ -352,6 +393,18 @@
       Stats
     </button>
   </nav>
+</div>
+
+<div class="sheet-backdrop" id="calendarSheet">
+  <div class="sheet">
+    <div class="sheet-head">
+      <span class="sheet-title">Jump to a day</span>
+      <button class="icon-btn" id="calCloseBtn" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+      </button>
+    </div>
+    <div class="sheet-body" id="calendarBody"></div>
+  </div>
 </div>
 
 <div class="sheet-backdrop" id="manageSheet">
@@ -514,6 +567,9 @@ const TODAY = new Date();
 TODAY.setHours(0,0,0,0);
 const TODAY_ISO = dateToIso(TODAY);
 
+let viewedDate = new Date(TODAY);
+let calCursor = new Date(TODAY);
+
 function isActiveOn(h, d){
   const iso = dateToIso(d);
   if(iso < h.createdAt) return false;
@@ -593,14 +649,14 @@ function renderToday(){
   const el = document.getElementById('view-today');
   let html = '';
   FREQ_ORDER.forEach(freq=>{
-    const habits = state.habits.filter(h => h.freq===freq && !h.archivedAt && isActiveOn(h, TODAY))
+    const habits = state.habits.filter(h => h.freq===freq && !h.archivedAt && isActiveOn(h, viewedDate))
       .sort((a,b)=> a.order-b.order);
     let sub = '';
     if(freq==='weekly'){
-      const mon = mondayOf(TODAY), sun = addDays(mon,6);
+      const mon = mondayOf(viewedDate), sun = addDays(mon,6);
       sub = fmtShort(mon)+'–'+fmtShort(sun);
     } else if(freq==='monthly'){
-      sub = TODAY.toLocaleDateString(undefined,{month:'long'});
+      sub = viewedDate.toLocaleDateString(undefined,{month:'long'});
     }
     html += `<div class="section">
       <div class="section-head">
@@ -609,10 +665,11 @@ function renderToday(){
       </div>
       <div class="card draggable-card" data-freq="${freq}">`;
     if(habits.length===0){
-      html += `<div class="empty-note">No ${freq} habits yet — add one from the gear icon above.</div>`;
+      const anyOfFreq = state.habits.some(h=>h.freq===freq);
+      html += `<div class="empty-note">${anyOfFreq ? `No ${freq} habits were active on this day.` : `No ${freq} habits yet — add one from the gear icon above.`}</div>`;
     } else {
       habits.forEach(h=>{
-        const key = periodKey(h, TODAY);
+        const key = periodKey(h, viewedDate);
         const done = isDone(h, key);
         html += `<div class="habit-row" data-done="${done}" data-habit="${h.id}" data-key="${key}">
           <span class="drag-handle" data-drag-handle aria-hidden="true">
@@ -712,13 +769,20 @@ function setupDragReorder(container, freq){
   });
 }
 
+function isSameDate(a,b){ return dateToIso(a)===dateToIso(b); }
+const isViewingToday = ()=> isSameDate(viewedDate, TODAY);
+
 function renderHeader(){
-  document.getElementById('dateLabel').textContent = fmtLong(TODAY);
-  const dailyToday = state.habits.filter(h=>h.freq==='daily' && isActiveOn(h,TODAY));
-  const doneToday = dailyToday.filter(h=>isDone(h, dateToIso(TODAY))).length;
-  const pct = dailyToday.length ? (doneToday/dailyToday.length*100) : 0;
+  document.getElementById('dateLabel').textContent = fmtLong(viewedDate);
+  document.getElementById('calOpenBtn').classList.toggle('viewing-past', !isViewingToday());
+  document.getElementById('jumpTodayBtn').hidden = isViewingToday();
+
+  const dailyOnDate = state.habits.filter(h=>h.freq==='daily' && isActiveOn(h,viewedDate));
+  const doneOnDate = dailyOnDate.filter(h=>isDone(h, dateToIso(viewedDate))).length;
+  const pct = dailyOnDate.length ? (doneOnDate/dailyOnDate.length*100) : 0;
   document.getElementById('todayFill').style.width = pct+'%';
-  document.getElementById('todayLabel').textContent = dailyToday.length ? `${doneToday}/${dailyToday.length} today` : 'no daily habits';
+  const suffix = isViewingToday() ? ' today' : '';
+  document.getElementById('todayLabel').textContent = dailyOnDate.length ? `${doneOnDate}/${dailyOnDate.length}${suffix}` : 'no daily habits';
 }
 
 function escapeHtml(s){
@@ -892,6 +956,69 @@ document.getElementById('manageOpenBtn').addEventListener('click', ()=>{
 });
 document.getElementById('manageCloseBtn').addEventListener('click', ()=> manageSheet.classList.remove('open'));
 manageSheet.addEventListener('click', (e)=>{ if(e.target===manageSheet) manageSheet.classList.remove('open'); });
+
+function renderCalendar(){
+  const body = document.getElementById('calendarBody');
+  const monthStart = new Date(calCursor.getFullYear(), calCursor.getMonth(), 1);
+  const daysInMonth = new Date(calCursor.getFullYear(), calCursor.getMonth()+1, 0).getDate();
+  const startOffset = (monthStart.getDay()===0 ? 6 : monthStart.getDay()-1);
+  const isCurrentMonth = calCursor.getFullYear()===TODAY.getFullYear() && calCursor.getMonth()===TODAY.getMonth();
+
+  let html = `<div class="cal-nav">
+    <button class="cal-nav-btn" id="calPrevBtn" aria-label="Previous month">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    </button>
+    <span class="cal-month-label">${calCursor.toLocaleDateString(undefined,{month:'long', year:'numeric'})}</span>
+    <button class="cal-nav-btn" id="calNextBtn" aria-label="Next month" ${isCurrentMonth?'disabled':''}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"></path></svg>
+    </button>
+  </div>
+  <div class="cal-grid">`;
+  ['Mo','Tu','We','Th','Fr','Sa','Su'].forEach(d=> html += `<div class="cal-dow">${d}</div>`);
+  for(let i=0;i<startOffset;i++) html += `<div class="cal-cell blank"></div>`;
+  for(let day=1; day<=daysInMonth; day++){
+    const d = new Date(calCursor.getFullYear(), calCursor.getMonth(), day);
+    const isFuture = d > TODAY;
+    const classes = ['cal-cell'];
+    if(isFuture) classes.push('future');
+    if(isSameDate(d, TODAY)) classes.push('today');
+    if(isSameDate(d, viewedDate)) classes.push('selected');
+    html += `<div class="${classes.join(' ')}"${isFuture?'':` data-day="${dateToIso(d)}"`}>${day}</div>`;
+  }
+  html += `</div>`;
+  body.innerHTML = html;
+
+  document.getElementById('calPrevBtn').addEventListener('click', ()=>{
+    calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth()-1, 1);
+    renderCalendar();
+  });
+  if(!isCurrentMonth){
+    document.getElementById('calNextBtn').addEventListener('click', ()=>{
+      calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth()+1, 1);
+      renderCalendar();
+    });
+  }
+  body.querySelectorAll('.cal-cell[data-day]').forEach(cell=>{
+    cell.addEventListener('click', ()=>{
+      viewedDate = isoToDate(cell.dataset.day);
+      calendarSheet.classList.remove('open');
+      renderAll();
+    });
+  });
+}
+
+const calendarSheet = document.getElementById('calendarSheet');
+document.getElementById('calOpenBtn').addEventListener('click', ()=>{
+  calCursor = new Date(viewedDate.getFullYear(), viewedDate.getMonth(), 1);
+  renderCalendar();
+  calendarSheet.classList.add('open');
+});
+document.getElementById('calCloseBtn').addEventListener('click', ()=> calendarSheet.classList.remove('open'));
+calendarSheet.addEventListener('click', (e)=>{ if(e.target===calendarSheet) calendarSheet.classList.remove('open'); });
+document.getElementById('jumpTodayBtn').addEventListener('click', ()=>{
+  viewedDate = new Date(TODAY);
+  renderAll();
+});
 
 async function boot(){
   state = await loadStateAsync();
